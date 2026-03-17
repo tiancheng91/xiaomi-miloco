@@ -14,6 +14,7 @@ from pydantic_core import to_jsonable_python
 from miot.client import MIoTClient
 from miot.types import MIoTOauthInfo, MIoTCameraInfo, MIoTDeviceInfo, MIoTManualSceneInfo, MIoTUserInfo
 from miot.camera import MIoTCameraInstance
+from miot.types import MIoTCameraVideoQuality
 
 from miloco_server.config import MIOT_CACHE_DIR, CAMERA_CONFIG
 from miloco_server.dao.kv_dao import AuthConfigKeys, KVDao, DeviceInfoKeys
@@ -46,6 +47,7 @@ class MiotProxy:
 
         self._token_refresh_task = None
         self._frame_interval: int = CAMERA_CONFIG["frame_interval"]
+        self._video_quality: str = CAMERA_CONFIG.get("video_quality", "low")
         self._camera_img_cache_max_size: int = CAMERA_CONFIG["camera_img_cache_max_size"]
 
         # two times cache ttl, at least 1 second
@@ -175,7 +177,16 @@ class MiotProxy:
     async def _create_camera_img_manager(self, camera_info: MIoTCameraInfo) -> CameraVisionHandler | None:
         camera_instance = await self._get_camera_instance(camera_info)
         if camera_instance is not None:
-            await camera_instance.start_async(enable_reconnect=True)
+            # Determine video quality based on config
+            video_quality = (
+                MIoTCameraVideoQuality.HIGH
+                if self._video_quality == "high"
+                else MIoTCameraVideoQuality.LOW
+            )
+            await camera_instance.start_async(
+                qualities=video_quality,
+                enable_reconnect=True
+            )
             camera_img_manager = CameraVisionHandler(
                 camera_info, camera_instance, max_size=self._camera_img_cache_max_size, ttl=self._camera_img_cache_ttl
             )

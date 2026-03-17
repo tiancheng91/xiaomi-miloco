@@ -60,6 +60,7 @@ trigger_rule_runner:
 # Camera configuration
 camera:
   frame_interval: 1000 # Unit: Millisecond (ms)
+  video_quality: "high" # Video quality: "low" or "high"
 
 
 # MIoT configuration, default to 'cn', use your MiHome cloud server

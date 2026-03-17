@@ -10,8 +10,8 @@ import os
 from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, Optional
-from fastapi import APIRouter, Depends, WebSocket
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Query, WebSocket
+from fastapi.responses import HTMLResponse, Response
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 
 from miloco_server.middleware import (
@@ -20,6 +20,7 @@ from miloco_server.middleware import (
 )
 from miloco_server.middleware import MiotServiceException, ResourceNotFoundException
 from miloco_server.schema.common_schema import NormalResponse
+from miloco_server.schema.miot_schema import CameraImgBase64Seq, CameraInfo
 from miloco_server.service.manager import get_manager
 
 logger = logging.getLogger(name=__name__)
@@ -130,6 +131,84 @@ async def get_miot_camera_list(current_user: str = Depends(verify_token)):
         message="MiOT camera list retrieved successfully",
         data=camera_list
     )
+
+
+@router.get(path="/camera/{camera_id}/image", summary="Get single camera image (binary)")
+async def get_miot_camera_image(
+    camera_id: str,
+    channel: int = Query(default=0, ge=0, description="Channel number"),
+    current_user: str = Depends(verify_token)
+):
+    """Get the latest image from a single camera as JPEG binary"""
+    logger.info("Get camera image API called, camera_id: %s, channel: %s, user: %s", camera_id, channel, current_user)
+
+    img_info = await manager.miot_service.get_miot_camera_image(camera_id, channel)
+
+    if img_info is None:
+        return Response(
+            content=b"",
+            media_type="image/jpeg",
+            status_code=404
+        )
+
+    return Response(
+        content=img_info.data,
+        media_type="image/jpeg",
+        headers={"X-Timestamp": str(img_info.timestamp)}
+    )
+
+
+@router.get(path="/camera_images", summary="Get multiple camera images (JSON)", response_model=NormalResponse)
+async def get_miot_camera_images(
+    camera_dids: str = Query(..., description="Camera device IDs (comma-separated)"),
+    img_count: int = Query(default=3, ge=1, le=10, description="Number of images per camera"),
+    channel: int = Query(default=0, ge=0, description="Channel number"),
+    current_user: str = Depends(verify_token)
+):
+    """Get images from multiple cameras as Base64 JSON"""
+    logger.info(
+        "Get camera images API called, camera_dids: %s, img_count: %s, channel: %s, user: %s",
+        camera_dids, img_count, channel, current_user
+    )
+
+    did_list = [did.strip() for did in camera_dids.split(",") if did.strip()]
+
+    if not did_list:
+        return NormalResponse(
+            code=0,
+            message="No camera IDs provided",
+            data=[]
+        )
+
+    # Get all camera info for building CameraInfo objects
+    all_cameras = await manager.miot_service.get_miot_camera_list()
+    camera_info_map = {cam.did: cam for cam in all_cameras}
+
+    result = []
+    for did in did_list:
+        camera_info = camera_info_map.get(did)
+        if camera_info is None:
+            # Camera not found, skip
+            logger.warning("Camera not found: %s", did)
+            continue
+
+        # Get images for this camera
+        img_seqs = await manager.miot_service.get_miot_cameras_img([did], img_count)
+
+        for img_seq in img_seqs:
+            if img_seq.channel == channel:
+                # Convert to base64
+                base64_seq: CameraImgBase64Seq = img_seq.to_base64()
+                result.append(base64_seq.model_dump())
+                break
+
+    logger.info("Successfully retrieved images from %d cameras", len(result))
+    return NormalResponse(
+        code=0,
+        message="Camera images retrieved successfully",
+        data=result
+    )
+
 
 @router.get(path="/device_list", summary="Get MiOT device list", response_model=NormalResponse)
 async def get_miot_device_list(current_user: str = Depends(verify_token)):

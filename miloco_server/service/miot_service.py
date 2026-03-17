@@ -12,7 +12,7 @@ from miot.types import MIoTUserInfo, MIoTCameraInfo, MIoTDeviceInfo, MIoTManualS
 
 from miloco_server.proxy.miot_proxy import MiotProxy
 from miloco_server.schema.trigger_schema import Action
-from miloco_server.schema.miot_schema import CameraChannel, CameraImgSeq, CameraInfo, DeviceInfo, SceneInfo
+from miloco_server.schema.miot_schema import CameraChannel, CameraImgInfo, CameraImgSeq, CameraInfo, DeviceInfo, SceneInfo
 from miloco_server.middleware.exceptions import (
     MiotOAuthException,
     MiotServiceException,
@@ -247,6 +247,36 @@ class MiotService:
         except Exception as e:
             logger.error("Failed to get MiOT camera images: %s", e)
             raise MiotServiceException(f"Failed to get MiOT camera images: {str(e)}") from e
+
+    async def get_miot_camera_image(self, camera_did: str, channel: int = 0) -> Optional[CameraImgInfo]:
+        """
+        Get the latest image from a single camera channel
+
+        Args:
+            camera_did: Camera device ID
+            channel: Channel number, default is 0
+
+        Returns:
+            CameraImgInfo: The latest image info, or None if not available
+        """
+        logger.info("get_miot_camera_image, camera_did: %s, channel: %s", camera_did, channel)
+        try:
+            # Check if camera exists
+            all_camera_info: dict[str, MIoTCameraInfo] = await self._miot_proxy.get_cameras()
+            if not all_camera_info or camera_did not in all_camera_info:
+                logger.warning("Camera not found: %s", camera_did)
+                return None
+
+            # Get the latest image from cache
+            camera_img_seq = self._miot_proxy.get_recent_camera_img(camera_did, channel, 1)
+            if not camera_img_seq or not camera_img_seq.img_list:
+                logger.warning("No image available for camera: %s, channel: %s", camera_did, channel)
+                return None
+
+            return camera_img_seq.img_list[0]
+        except Exception as e:
+            logger.error("Failed to get MiOT camera image: %s", e)
+            raise MiotServiceException(f"Failed to get MiOT camera image: {str(e)}") from e
 
     async def get_miot_scene_list(self) -> List[SceneInfo]:
         """
